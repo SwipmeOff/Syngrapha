@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SYNGRAPHA · Mobile</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * { box-sizing: border-box; touch-action: manipulation; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0a0a; color: #f0f0f0; margin: 0; padding: 10px; text-align: center; }
+        h1 { color: #ff3333; font-size: 24px; letter-spacing: 2px; margin: 10px 0; text-transform: uppercase; }
+        input[type="text"], input[type="number"], button { font-size: 16px; padding: 12px; border-radius: 8px; border: 1px solid #333; width: 100%; max-width: 300px; margin-bottom: 10px; background: #111; color: #fff; }
+        button { background: #ff3333; font-weight: bold; cursor: pointer; border: none; }
+        button:active { background: #cc2222; }
+        .tablero { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px auto; max-width: 400px; }
+        .card-jugador { border: 1px solid #222; padding: 8px; background: #121212; border-radius: 6px; font-size: 13px; }
+        .card-jugador.activo { border-color: #ff3333; background: #1a0d0d; }
+        .card-jugador.eliminado { opacity: 0.25; background: #200; text-decoration: line-through; }
+        .mi-mano { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 15px 0; padding: 5px; background: #111; border-radius: 10px; min-height: 110px; }
+        .carta { width: 65px; height: 95px; background: #1e1e1e; border: 2px solid #444; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+        .carta.seleccionada { border-color: #ff3333; background: #2a1111; transform: translateY(-5px); }
+        .controles, .panel-acusacion { background: #161616; padding: 15px; border-radius: 10px; margin: 15px auto; max-width: 400px; border: 1px solid #252525; display: none; }
+        .btn-accion { padding: 14px; margin: 5px 0; width: 100%; font-size: 16px; }
+        .logs { background: #000; color: #39ff14; height: 90px; overflow-y: scroll; text-align: left; padding: 8px; font-size: 11px; margin-top: 15px; border-radius: 6px; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <h1>Syngrapha</h1>
+    
+    <div id="login">
+        <input type="text" id="nombreInput" placeholder="Tu Nombre o Alias">
+        <button onclick="conectar()">Entrar a la Mesa</button>
+    </div>
+
+    <div id="juego" style="display:none;">
+        <div id="info-ronda" style="font-size: 14px; color: #aaa; margin-bottom: 10px;">Ronda 1</div>
+        <div class="tablero" id="tablero-jugadores"></div>
+
+        <div class="panel-acusacion" id="panel-acusacion">
+            <h4 id="texto-acusacion" style="margin-top:0;"></h4>
+            <button class="btn-accion" onclick="responderAcusacion(true)" style="background:#ff3333;">¡MIENTES!</button>
+            <button class="btn-accion" onclick="responderAcusacion(false)" style="background:#22c55e; margin-top:8px;">Dejar Pasar</button>
+        </div>
+
+        <div class="controles" id="controles-declarar">
+            <h4 style="margin-top:0;">Tu Turno. Configura tu Bluff:</h4>
+            <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                <label for="dec-num">Número a declarar:</label>
+                <input type="number" id="dec-num" min="1" max="10" value="5" style="width: 80px; margin: 0; text-align: center;">
+            </div>
+            <div style="margin-bottom: 15px; text-align: left;">
+                <label style="display: flex; align-items: center; font-size: 15px;">
+                    <input type="checkbox" id="dec-comodin" style="width:22px; height:22px; margin-right:10px;"> Declarar como Comodín
+                </label>
+            </div>
+            <button class="btn-accion" onclick="enviarDeclaracion()" style="background: #ffffff; color: #000;">Sostener y Declarar</button>
+        </div>
+
+        <h3 style="font-size:16px; text-align:left;">Tus Cartas</h3>
+        <div class="mi-mano" id="mis-cartas"></div>
+    </div>
+
+    <div class="logs" id="box-logs"></div>
+
+    <script>
+        const socket = io();
+        let miId = null;
+        let cartaSeleccionadaIdx = null;
+
+        function conectar() {
+            const nom = document.getElementById('nombreInput').value;
+            if(!nom) return;
+            socket.emit('unirse', nom);
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('juego').style.display = 'block';
+        }
+
+        socket.on('tu_id', id => miId = id);
+
+        socket.on('tu_mano', mano => {
+            const container = document.getElementById('mis-cartas');
+            container.innerHTML = '';
+            mano.forEach((carta, idx) => {
+                const div = document.createElement('div');
+                div.className = 'carta';
+                div.innerText = carta.esComodin ? 'JOKER\n🃏' : `${carta.numero}\n${obtenerIconoPalo(carta.palo)}`;
+                if(carta.palo === 'Corazones' || carta.palo === 'Diamantes') div.style.color = '#ff4d4d';
+                
+                div.onclick = () => {
+                    document.querySelectorAll('.carta').forEach(c => c.classList.remove('seleccionada'));
+                    div.classList.add('seleccionada');
+                    cartaSeleccionadaIdx = idx;
+                };
+                container.appendChild(div);
+            });
+        });
+
+        function obtenerIconoPalo(palo) {
+            if (palo === 'Corazones') return '♥';
+            if (palo === 'Diamantes') return '♦';
+            if (palo === 'Tréboles') return '♣';
+            if (palo === 'Picas') return '♠';
+            return '';
+        }
+
+        socket.on('actualizar_estado', estado => {
+            document.getElementById('info-ronda').innerText = `Ronda ${estado.ronda} | Sentido: ${estado.sentidoHorario ? 'Horario ➔' : 'Antihorario  ◀'}`;
+            const tablero = document.getElementById('tablero-jugadores');
+            tablero.innerHTML = '';
+            
+            estado.jugadores.forEach((j, idx) => {
+                const div = document.createElement('div');
+                div.className = `card-jugador ${idx === estado.turnoActualIdx ? 'activo' : ''} ${!j.activo ? 'eliminado' : ''}`;
+                div.innerHTML = `<strong>${j.nombre}</strong>${idx === miId ? ' (Tú)' : ''}<br>Puntos: ${j.puntaje.toFixed(1)}<br>Cartas: ${j.cartasRestantes}`;
+                tablero.appendChild(div);
+            });
+
+            if (estado.turnoActualIdx === miId && !estado.cartaEnMesa && estado.jugadores[miId].activo) {
+                document.getElementById('controles-declarar').style.display = 'block';
+            } else {
+                document.getElementById('controles-declarar').style.display = 'none';
+            }
+            document.getElementById('panel-acusacion').style.display = 'none';
+        });
+
+        function enviarDeclaracion() {
+            if(cartaSeleccionadaIdx === null) { alert("Toca una carta de tu mano primero."); return; }
+            const num = document.getElementById('dec-num').value;
+            const comoComodin = document.getElementById('dec-comodin').checked;
+            
+            socket.emit('declarar_carta', {
+                idxCarta: cartaSeleccionadaIdx,
+                numeroDeclarado: num,
+                tipoDeclarado: comoComodin ? 'comodin' : 'numero'
+            });
+            cartaSeleccionadaIdx = null;
+        }
+
+        socket.on('fase_acusacion', ({ acusadorIdx, declaracion }) => {
+            document.getElementById('controles-declarar').style.display = 'none';
+            if (miId === acusadorIdx) {
+                document.getElementById('panel-acusacion').style.display = 'block';
+                document.getElementById('texto-acusacion').innerText = `${declaracion.por} declara: ${declaracion.tipo === 'comodin' ? 'Un Comodín' : declaracion.valor}. ¿Qué decides?`;
+            }
+        });
+
+        function responderAcusacion(gritaMientes) {
+            socket.emit('resolver_acusacion', gritaMientes);
+            document.getElementById('panel-acusacion').style.display = 'none';
+        }
+
+        socket.on('error_jugada', (mensaje) => {
+            alert(`⚠️ MOVIMIENTO ILEGAL:\n\n${mensaje}`);
+        });
+
+        socket.on('log', msg => {
+            const box = document.getElementById('box-logs');
+            box.innerHTML += `<div>• ${msg}</div>`;
+            box.scrollTop = box.scrollHeight;
+        });
+    </script>
+</body>
+</html>
